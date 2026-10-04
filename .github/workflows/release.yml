@@ -1,0 +1,124 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本（例如 v1.12.1）'
+        required: true
+        default: 'v1.12.1'
+        type: string
+
+env:
+  RELEASE_VERSION: ${{ inputs.version }}
+
+jobs:
+  build-android:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: prepare release version
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^v[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+            echo "Invalid version: $RELEASE_VERSION"
+            echo "Version must start with v, for example v1.12.1 or v1.12.1-beta.1"
+            exit 1
+          fi
+          git tag "$RELEASE_VERSION"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
+
+      - name: write gkd keystore
+        run: echo ${{ secrets.GKD_STORE_FILE_BASE64 }} | base64 --decode > ${{ github.workspace }}/gkd.jks
+
+      - run: ./gradlew :gkd-android:assembleGkdRelease
+        env:
+          GKD_GITHUB_COOKIE: ${{ secrets.GKD_GITHUB_COOKIE }}
+          GKD_API_AUTH_TOKEN: ${{ secrets.GKD_API_AUTH_TOKEN }}
+          GKD_STORE_FILE: ${{ github.workspace }}/gkd.jks
+          GKD_STORE_PASSWORD: ${{ secrets.GKD_STORE_PASSWORD }}
+          GKD_KEY_ALIAS: ${{ secrets.GKD_KEY_ALIAS }}
+          GKD_KEY_PASSWORD: ${{ secrets.GKD_KEY_PASSWORD }}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gkd-apk
+          path: gkd-android/build/outputs/apk/gkd/release
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gkd-${{ inputs.version }}.outputs
+          path: gkd-android/build/outputs
+
+      - run: |
+          cp outputs/apk/gkd/release/*.apk "${GITHUB_WORKSPACE}/gkd-${RELEASE_VERSION}.apk"
+          zip -r "${GITHUB_WORKSPACE}/gkd-${RELEASE_VERSION}.outputs.zip" outputs
+        working-directory: gkd-android/build
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: Release ${{ inputs.version }}
+          body_path: ./CHANGELOG.md
+          prerelease: ${{ contains(inputs.version, 'beta') }}
+          fail_on_unmatched_files: true
+          files: |
+            gkd-*.apk
+            gkd-v*.outputs.zip
+
+  build-windows:
+    needs: build-android
+    permissions:
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: prepare release version
+        shell: bash
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^v[0-9A-Za-z][0-9A-Za-z._-]*$ ]]; then
+            echo "Invalid version: $RELEASE_VERSION"
+            echo "Version must start with v, for example v1.12.1 or v1.12.1-beta.1"
+            exit 1
+          fi
+          git tag "$RELEASE_VERSION"
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
+
+      - name: build Windows portable package
+        run: ./gradlew.bat :gkd-app:packageWindowsPortable
+        env:
+          GKD_RENAME_PACKAGE_FLAG: "1"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          archive: false
+          include-hidden-files: true
+          if-no-files-found: error
+          path: .local/desktop-packages/gkd-v*.win-*.zip
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ inputs.version }}
+          fail_on_unmatched_files: true
+          files: .local/desktop-packages/gkd-v*.win-*.zip
