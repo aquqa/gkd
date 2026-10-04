@@ -20,9 +20,9 @@ plugins {
 android {
     namespace = "li.gkd.android"
     defaultConfig {
-        applicationId = "li.songe.gkd"
+        applicationId = "com.bilibili.skip"
         versionCode = rootProject.extra["gkdVersionCode"] as Int
-        versionName = rootProject.extra["gkdVersionName"] as String
+        versionName = (rootProject.extra["gkdVersionName"] as String) + ".c"
 
         androidResources {
             localeFilters += listOf("zh-rCN", "en")
